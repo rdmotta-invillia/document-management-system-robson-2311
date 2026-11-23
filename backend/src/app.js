@@ -65,8 +65,11 @@ app.get('/documents', (req, res) => {
 });
 
 app.get('/documents/:id/download', downloadRateLimit, (req, res) => {
-  const documentId = req.params.id;
-  if (!/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(documentId)) {
+  const documentId = path.basename(req.params.id);
+  if (
+    documentId !== req.params.id ||
+    !/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(documentId)
+  ) {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
