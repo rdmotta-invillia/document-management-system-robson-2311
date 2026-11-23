@@ -54,16 +54,14 @@ app.post('/upload', upload.single('file'), (req, res) => {
     size: req.file.size,
     uploadedAt: new Date().toISOString(),
     owner: req.get('x-user-id') || 'anonymous',
-    filePath: req.file.path,
   };
   documents.set(document.id, document);
 
-  const { filePath, ...metadata } = document;
-  return res.status(201).json(metadata);
+  return res.status(201).json(document);
 });
 
 app.get('/documents', (req, res) => {
-  res.json([...documents.values()].map(({ filePath, ...metadata }) => metadata));
+  res.json([...documents.values()]);
 });
 
 app.get('/documents/:id/download', downloadRateLimit, (req, res) => {
@@ -72,7 +70,11 @@ app.get('/documents/:id/download', downloadRateLimit, (req, res) => {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
-  return res.download(document.filePath, document.originalName);
+  if (!/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(document.id)) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
+
+  return res.download(path.join(storageDir, document.id), document.originalName);
 });
 
 if (require.main === module) {
