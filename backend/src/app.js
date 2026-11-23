@@ -11,16 +11,61 @@
 // usando multer com diskStorage. Não utilize provedores externos.
 
 const express = require('express');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const storageDir = process.env.DOCUMENT_STORAGE_DIR || path.join(__dirname, '../storage');
+const documents = new Map();
+
+fs.mkdirSync(storageDir, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: storageDir,
+    filename: (req, file, callback) => callback(null, crypto.randomUUID()),
+  }),
+});
 
 app.use(express.json());
 
-// Endpoint de verificação de saúde. As demais rotas (/upload, /documents,
-// /documents/:id/download) serão implementadas durante o Passo 2.
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+  }
+
+  const document = {
+    id: req.file.filename,
+    originalName: req.file.originalname,
+    size: req.file.size,
+    uploadedAt: new Date().toISOString(),
+    owner: req.get('x-user-id') || 'anonymous',
+    filename: req.file.filename,
+  };
+  documents.set(document.id, document);
+
+  const { filename, ...metadata } = document;
+  return res.status(201).json(metadata);
+});
+
+app.get('/documents', (req, res) => {
+  res.json([...documents.values()].map(({ filename, ...metadata }) => metadata));
+});
+
+app.get('/documents/:id/download', (req, res) => {
+  const document = documents.get(req.params.id);
+  if (!document) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
+
+  return res.download(path.join(storageDir, document.filename), document.originalName);
 });
 
 if (require.main === module) {
