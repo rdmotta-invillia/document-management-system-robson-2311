@@ -8,6 +8,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const storageDirectory = path.join(__dirname, '../storage');
 const documents = new Map();
+const downloadRequests = new Map();
+const downloadLimit = 60;
+const downloadWindow = 60 * 1000;
 
 fs.mkdirSync(storageDirectory, { recursive: true });
 
@@ -44,27 +47,46 @@ app.post('/upload', (req, res, next) => {
       size: req.file.size,
       uploadedAt: new Date().toISOString(),
       owner: null,
-      filePath: req.file.path,
     };
     documents.set(document.id, document);
 
-    const { filePath, ...publicDocument } = document;
-    return res.status(201).json({ document: publicDocument });
+    return res.status(201).json({ document });
   });
 });
 
 app.get('/documents', (_req, res) => {
-  const publicDocuments = Array.from(documents.values(), ({ filePath, ...document }) => document);
+  const publicDocuments = Array.from(documents.values());
   res.json({ documents: publicDocuments });
 });
 
 app.get('/documents/:id/download', (req, res, next) => {
+  const now = Date.now();
+  const clientIp = req.socket.remoteAddress || 'unknown';
+  let requestWindow = downloadRequests.get(clientIp);
+
+  if (!requestWindow || now - requestWindow.startedAt >= downloadWindow) {
+    requestWindow = { startedAt: now, count: 0 };
+  }
+  if (requestWindow.count >= downloadLimit) {
+    return res.status(429).json({ error: 'Limite de downloads excedido.' });
+  }
+  requestWindow.count += 1;
+  downloadRequests.delete(clientIp);
+  downloadRequests.set(clientIp, requestWindow);
+  if (downloadRequests.size > 10000) {
+    downloadRequests.delete(downloadRequests.keys().next().value);
+  }
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
   const document = documents.get(req.params.id);
   if (!document) {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
-  return res.download(document.filePath, document.originalName, (error) => {
+  const filePath = path.join(storageDirectory, document.id);
+  return res.download(filePath, document.originalName, (error) => {
     if (!error || res.headersSent) {
       return;
     }

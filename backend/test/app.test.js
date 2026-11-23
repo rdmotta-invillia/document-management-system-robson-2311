@@ -74,6 +74,14 @@ test('upload, listagem e download de documentos', async (t) => {
     );
   });
 
+  await t.test('limita downloads excessivos por endereço', async () => {
+    for (let request = 0; request < 59; request += 1) {
+      const response = await fetch(`${baseUrl}/documents/${uploadedDocument.id}/download`);
+      assert.strictEqual(response.status, request < 58 ? 200 : 429);
+      await response.arrayBuffer();
+    }
+  });
+
   t.after(async () => {
     if (uploadedDocument) {
       await fs.rm(path.join(__dirname, '../storage', uploadedDocument.id), { force: true });
