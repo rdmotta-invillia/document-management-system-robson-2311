@@ -2,15 +2,14 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const storageDirectory = path.join(__dirname, '../storage');
 const documents = new Map();
-const downloadRequests = new Map();
-const downloadLimit = 60;
-const downloadWindow = 60 * 1000;
+const downloadLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60 });
 
 fs.mkdirSync(storageDirectory, { recursive: true });
 
@@ -59,24 +58,7 @@ app.get('/documents', (_req, res) => {
   res.json({ documents: publicDocuments });
 });
 
-app.get('/documents/:id/download', (req, res, next) => {
-  const now = Date.now();
-  const clientIp = req.socket.remoteAddress || 'unknown';
-  let requestWindow = downloadRequests.get(clientIp);
-
-  if (!requestWindow || now - requestWindow.startedAt >= downloadWindow) {
-    requestWindow = { startedAt: now, count: 0 };
-  }
-  if (requestWindow.count >= downloadLimit) {
-    return res.status(429).json({ error: 'Limite de downloads excedido.' });
-  }
-  requestWindow.count += 1;
-  downloadRequests.delete(clientIp);
-  downloadRequests.set(clientIp, requestWindow);
-  if (downloadRequests.size > 10000) {
-    downloadRequests.delete(downloadRequests.keys().next().value);
-  }
-
+app.get('/documents/:id/download', downloadLimiter, (req, res, next) => {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
@@ -85,7 +67,7 @@ app.get('/documents/:id/download', (req, res, next) => {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
-  const filePath = path.join(storageDirectory, document.id);
+  const filePath = path.join(storageDirectory, path.basename(document.id));
   return res.download(filePath, document.originalName, (error) => {
     if (!error || res.headersSent) {
       return;
