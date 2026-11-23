@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const multer = require('multer');
+const { rateLimit } = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +29,12 @@ const upload = multer({
     destination: storageDir,
     filename: (req, file, callback) => callback(null, crypto.randomUUID()),
   }),
+});
+const downloadRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
 });
 
 app.use(express.json());
@@ -47,25 +54,25 @@ app.post('/upload', upload.single('file'), (req, res) => {
     size: req.file.size,
     uploadedAt: new Date().toISOString(),
     owner: req.get('x-user-id') || 'anonymous',
-    filename: req.file.filename,
+    filePath: req.file.path,
   };
   documents.set(document.id, document);
 
-  const { filename, ...metadata } = document;
+  const { filePath, ...metadata } = document;
   return res.status(201).json(metadata);
 });
 
 app.get('/documents', (req, res) => {
-  res.json([...documents.values()].map(({ filename, ...metadata }) => metadata));
+  res.json([...documents.values()].map(({ filePath, ...metadata }) => metadata));
 });
 
-app.get('/documents/:id/download', (req, res) => {
+app.get('/documents/:id/download', downloadRateLimit, (req, res) => {
   const document = documents.get(req.params.id);
   if (!document) {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
-  return res.download(path.join(storageDir, document.filename), document.originalName);
+  return res.download(document.filePath, document.originalName);
 });
 
 if (require.main === module) {
