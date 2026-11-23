@@ -1,26 +1,82 @@
-// Seed do servidor backend do Document Management System.
-//
-// Este arquivo é apenas um ponto de partida mínimo. Ao longo do workshop você
-// vai usar o Agent Mode do GitHub Copilot para construir as camadas:
-//   - routes/       (definição das rotas)
-//   - controllers/  (entrada HTTP e validação)
-//   - services/     (regras de negócio)
-//   - repositories/ (persistência: arquivos locais + metadados em memória)
-//
-// Restrição do projeto: uploads são gravados no filesystem local da aplicação
-// usando multer com diskStorage. Não utilize provedores externos.
-
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const storageDirectory = path.join(__dirname, '../storage');
+const documents = new Map();
+const downloadLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60 });
+
+fs.mkdirSync(storageDirectory, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => callback(null, storageDirectory),
+    filename: (_req, _file, callback) => callback(null, crypto.randomUUID()),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+}).single('file');
 
 app.use(express.json());
 
-// Endpoint de verificação de saúde. As demais rotas (/upload, /documents,
-// /documents/:id/download) serão implementadas durante o Passo 2.
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.post('/upload', (req, res, next) => {
+  upload(req, res, (error) => {
+    if (error instanceof multer.MulterError) {
+      const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      return res.status(status).json({ error: error.message });
+    }
+    if (error) {
+      return next(error);
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'É necessário enviar um arquivo.' });
+    }
+
+    const document = {
+      id: req.file.filename,
+      originalName: req.file.originalname,
+      size: req.file.size,
+      uploadedAt: new Date().toISOString(),
+      owner: null,
+    };
+    documents.set(document.id, document);
+
+    return res.status(201).json({ document });
+  });
+});
+
+app.get('/documents', (_req, res) => {
+  const publicDocuments = Array.from(documents.values());
+  res.json({ documents: publicDocuments });
+});
+
+app.get('/documents/:id/download', downloadLimiter, (req, res, next) => {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
+  const document = documents.get(req.params.id);
+  if (!document) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
+
+  const filePath = path.join(storageDirectory, path.basename(document.id));
+  return res.download(filePath, document.originalName, (error) => {
+    if (!error || res.headersSent) {
+      return;
+    }
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Documento não encontrado.' });
+    }
+    return next(error);
+  });
 });
 
 if (require.main === module) {
